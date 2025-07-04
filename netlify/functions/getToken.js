@@ -5,7 +5,7 @@ exports.handler = async function (event, context) {
     const allowedOrigins = [
   "https://leegality.webflow.io",
   "https://www.leegality.com",
-  "https://consentin.webflow.io,
+  "https://consentin.webflow.io",
   "https://consent.in",
   "https://www.consent.in"
 ];
