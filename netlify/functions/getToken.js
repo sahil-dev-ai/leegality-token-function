@@ -2,7 +2,13 @@ const fetch = require("node-fetch");
 
 exports.handler = async function (event, context) {
     // Define allowed origins
-    const allowedOrigins = ["https://leegality.webflow.io", "https://www.leegality.com"];
+    const allowedOrigins = [
+  "https://leegality.webflow.io",
+  "https://www.leegality.com",
+  "https://consentin.webflow.io,
+  "https://consent.in",
+  "https://www.consent.in"
+];
     const requestOrigin = event.headers.origin || "";
 
     // Check if the request origin is allowed
