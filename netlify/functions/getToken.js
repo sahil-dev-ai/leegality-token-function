@@ -70,7 +70,7 @@ exports.handler = async function (event, context) {
         },
         body: new URLSearchParams({
           grant_type: "client_credentials",
-          scope: "auth consent-runner",
+          scope: "auth consent-runner consent-manager", // 👈 fixed scopes
         }),
       }
     );
