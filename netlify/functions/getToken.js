@@ -8,6 +8,7 @@ exports.handler = async function (event, context) {
   "https://consentin.webflow.io",
   "https://consent.in",
   "https://www.consent.in"
+  "https://szwdt-5173.csb.app" // 👈 add your CodeSandbox URL here
 ];
     const requestOrigin = event.headers.origin || "";
 
