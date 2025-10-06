@@ -8,6 +8,7 @@ exports.handler = async function (event, context) {
     "https://consentin.webflow.io",
     "https://consent.in",
     "https://www.consent.in",
+    "https://customer-onboarding-app.netlify.app/",
     "https://szvwdt-5173.csb.app" // 👈 add your CodeSandbox URL here
   ];
 
