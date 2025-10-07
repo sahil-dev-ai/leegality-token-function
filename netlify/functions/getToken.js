@@ -9,7 +9,7 @@ exports.handler = async function (event, context) {
     "https://consent.in",
     "https://www.consent.in",
     "https://customer-onboarding-app.netlify.app",
-    "https://s6rrxk.csb.app",
+    "https://5chdjf-5000.csb.app",
     "https://szvwdt-5173.csb.app" // 👈 add your CodeSandbox URL here
   ];
 
