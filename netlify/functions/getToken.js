@@ -9,13 +9,11 @@ exports.handler = async function (event, context) {
     "https://consent.in",
     "https://www.consent.in",
     "https://customer-onboarding-app.netlify.app",
-    "https://5chdjf-5000.csb.app",
     "https://digital-lending-app.figma.site",
     "https://digital-lending.figma.site",
     "https://*.figma.site",
     "https://yournaukri-hr-demo.netlify.app",
-    "https://car-insurance-app.figma.site",
-    "https://szvwdt-5173.csb.app" // 👈 add your CodeSandbox URL here
+    "https://car-insurance-app.figma.site" // 👈 add your CodeSandbox URL here
   ];
 
   const requestOrigin = event.headers.origin || "";
