@@ -1,7 +1,6 @@
 // netlify/functions/consent-register.js
 const fetch = require("node-fetch");
 
-// Reuse the same allowedOrigins as your getToken function
 const allowedOrigins = [
   "https://leegality.webflow.io",
   "https://www.leegality.com",
@@ -13,10 +12,10 @@ const allowedOrigins = [
   "https://digital-lending.figma.site",
   "https://*.figma.site",
   "https://yournaukri-hr-demo.netlify.app",
-  "https://car-insurance-app.figma.site"
+  "https://car-insurance-app.figma.site",
 ];
 
-exports.handler = async function (event, context) {
+exports.handler = async function (event) {
   const requestOrigin = event.headers.origin || "";
 
   // Preflight
@@ -34,16 +33,15 @@ exports.handler = async function (event, context) {
     };
   }
 
-  // Only allow POST
   if (event.httpMethod !== "POST") {
     return {
       statusCode: 405,
-      headers: { "Allow": "POST, OPTIONS" },
+      headers: { Allow: "POST, OPTIONS" },
       body: JSON.stringify({ error: "Method not allowed" }),
     };
   }
 
-  // Block unknown browser origins (but allow non-browser callers without Origin)
+  // Allow non-browser callers (no origin), restrict browsers
   if (requestOrigin && !allowedOrigins.includes(requestOrigin)) {
     return {
       statusCode: 403,
@@ -58,7 +56,7 @@ exports.handler = async function (event, context) {
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   };
 
-  // Parse input from frontend
+  // Parse body
   let body;
   try {
     body = JSON.parse(event.body || "{}");
@@ -70,7 +68,7 @@ exports.handler = async function (event, context) {
     };
   }
 
-  const { name, email, phone } = body;
+  const { name, email, phone, consentProfileId, consentProfileVersion } = body;
 
   if (!name || !email || !phone) {
     return {
@@ -83,14 +81,26 @@ exports.handler = async function (event, context) {
     };
   }
 
-  // Read credentials and config from environment variables
+  // Use profile info from frontend, but allow a default from env if needed
+  const profileId =
+    consentProfileId || process.env.CONSENT_PROFILE_ID; // optional fallback
+  const profileVersion = Number(
+    consentProfileVersion || process.env.CONSENT_PROFILE_VERSION || 1
+  );
+
+  if (!profileId) {
+    return {
+      statusCode: 400,
+      headers: corsHeader,
+      body: JSON.stringify({
+        error:
+          "consentProfileId is required (provide from frontend or set CONSENT_PROFILE_ID env var).",
+      }),
+    };
+  }
+
   const clientId = process.env.LEEGALITY_CLIENT_ID;
   const clientSecret = process.env.LEEGALITY_CLIENT_SECRET;
-  const consentProfileId =
-    process.env.CONSENT_PROFILE_ID || "ba39e63a-460e-43c9-88b0-70ddf7d282c7";
-  const consentProfileVersion = Number(
-    process.env.CONSENT_PROFILE_VERSION || 1
-  );
 
   if (!clientId || !clientSecret) {
     return {
@@ -102,12 +112,10 @@ exports.handler = async function (event, context) {
 
   const baseUrl =
     process.env.LEEGALITY_BASE_URL ||
-    "https://sandbox-gateway.leegality.com"; // default to sandbox
+    "https://sandbox-gateway.leegality.com"; // sandbox by default
 
   try {
-    //
-    // 1) Get OAuth token (same as getToken function)
-    //
+    // 1) Get OAuth token
     const authHeader =
       "Basic " + Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
 
@@ -138,14 +146,12 @@ exports.handler = async function (event, context) {
 
     const accessToken = tokenData.access_token;
 
-    //
     // 2) Build register payload
-    //
-    const cpid = `${email}-${Date.now()}`; // you can change this logic if needed
+    const cpid = `${email}-${Date.now()}`; // still generated backend-only
 
     const registerPayload = {
-      consentProfileId,
-      consentProfileVersion,
+      consentProfileId: profileId,
+      consentProfileVersion: profileVersion,
       principal: {
         id: cpid,
         email,
@@ -156,9 +162,7 @@ exports.handler = async function (event, context) {
       sessionExpiry: 60,
     };
 
-    //
-    // 3) Call register API from backend
-    //
+    // 3) Call register API
     const registerRes = await fetch(
       `${baseUrl}/consent-runner/api/v1/consents/client/register`,
       {
@@ -196,15 +200,14 @@ exports.handler = async function (event, context) {
       };
     }
 
-    //
-    // 4) Return ONLY safe data to the frontend
-    //
     return {
       statusCode: 200,
       headers: corsHeader,
       body: JSON.stringify({
         consentUrl,
         cpid,
+        profileId,
+        profileVersion,
       }),
     };
   } catch (error) {
