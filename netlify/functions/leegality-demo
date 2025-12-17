@@ -1,15 +1,15 @@
-// netlify/functions/de-demo-invite.js
-const axios = require("axios");
+// netlify/functions/leegality-demo.js
 
-// --- CORS headers (start with *; later restrict to https://leegality.com) ---
+// ---- CORS HEADERS ----
 const corsHeaders = {
+  // While testing, keep "*". Once stable, change this to "https://www.leegality.com"
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "Content-Type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS"
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type"
 };
 
 exports.handler = async (event, context) => {
-  // 1) Handle preflight
+  // 1) Handle CORS preflight (OPTIONS)
   if (event.httpMethod === "OPTIONS") {
     return {
       statusCode: 200,
@@ -18,7 +18,7 @@ exports.handler = async (event, context) => {
     };
   }
 
-  // 2) Only POST allowed
+  // 2) Only allow POST
   if (event.httpMethod !== "POST") {
     return {
       statusCode: 405,
@@ -28,21 +28,21 @@ exports.handler = async (event, context) => {
   }
 
   try {
-    const { name, email, contact, profileId } = JSON.parse(event.body || "{}");
+    const req = JSON.parse(event.body || "{}");
+    const { name, email, contact, profileId } = req;
 
     if (!name || !email || !profileId) {
       return {
         statusCode: 400,
         headers: corsHeaders,
         body: JSON.stringify({
-          success: false,
           error: "Missing required fields: name, email, profileId"
         })
       };
     }
 
-    // Payload for DE demo endpoint
-    const leegalityPayload = {
+    // Build DE demo payload – this is what you were sending from Webflow earlier
+    const payload = {
       name,
       username: email,
       contact: contact || "Not provided",
@@ -50,60 +50,60 @@ exports.handler = async (event, context) => {
     };
 
     const baseUrl =
-      process.env.LEEGALITY_BASE_URL || "https://sandbox.leegality.com";
+      process.env.LEEGALITY_DEMO_BASE_URL || "https://sandbox.leegality.com";
 
-    // 3) Call Leegality demo API from backend (NO CORS here, this is server-to-server)
-    const response = await axios.post(
-      `${baseUrl}/api/v2.1/demo`,
-      leegalityPayload,
-      {
-        headers: {
-          "Content-Type": "application/json"
-          // For real v3 esign: also add 'X-Auth-Token': process.env.LEEGALITY_AUTH_TOKEN
-        }
-      }
-    );
+    // Server-side call to Leegality demo API (no CORS issues here)
+    const apiRes = await fetch(`${baseUrl}/api/v2.1/demo`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
 
-    const apiData = response.data;
+    const apiData = await apiRes.json();
+
+    if (!apiRes.ok) {
+      console.error("Leegality demo API error:", apiData);
+      return {
+        statusCode: apiRes.status,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          error: "Leegality API error",
+          details: apiData
+        })
+      };
+    }
+
     const signUrl = apiData?.data?.invitations?.[0]?.signUrl;
 
     if (!signUrl) {
+      console.error("No signUrl in response:", apiData);
       return {
         statusCode: 500,
         headers: corsHeaders,
         body: JSON.stringify({
-          success: false,
           error: "No signUrl returned by Leegality",
           raw: apiData
         })
       };
     }
 
-    // 4) Return signUrl to frontend
+    // 3) Return signUrl to frontend
     return {
       statusCode: 200,
       headers: {
         ...corsHeaders,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({
-        success: true,
-        signUrl
-      })
+      body: JSON.stringify({ signUrl })
     };
-  } catch (error) {
-    console.error("DE demo function error:", error.response?.data || error);
-
+  } catch (err) {
+    console.error("Netlify function error:", err);
     return {
-      statusCode: error.response?.status || 500,
-      headers: {
-        ...corsHeaders,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        success: false,
-        error: error.response?.data || error.message
-      })
+      statusCode: 500,
+      headers: corsHeaders,
+      body: JSON.stringify({ error: "Internal server error" })
     };
   }
 };
