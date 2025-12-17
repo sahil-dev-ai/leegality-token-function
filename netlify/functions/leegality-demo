@@ -1,13 +1,14 @@
 // netlify/functions/leegality-demo.js
 
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*", // or restrict to your domains later
-  "Access-Control-Allow-Headers": "Content-Type",
-  "Access-Control-Allow-Methods": "POST,OPTIONS"
+  // For now allow all; later you can restrict to your Webflow / Figma domains
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type"
 };
 
-export const handler = async (event, context) => {
-  // CORS preflight
+exports.handler = async (event, context) => {
+  // 1. Handle preflight
   if (event.httpMethod === "OPTIONS") {
     return {
       statusCode: 204,
@@ -16,6 +17,7 @@ export const handler = async (event, context) => {
     };
   }
 
+  // 2. Only allow POST for actual usage
   if (event.httpMethod !== "POST") {
     return {
       statusCode: 405,
@@ -45,7 +47,6 @@ export const handler = async (event, context) => {
       profileId
     };
 
-    // You can move this to env if you want:
     const baseUrl =
       process.env.LEEGALITY_BASE_URL || "https://sandbox.leegality.com";
 
@@ -53,9 +54,6 @@ export const handler = async (event, context) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
-        // If in future DE requires auth, add header here:
-        // "x-api-key": process.env.LEEGALITY_API_KEY,
-        // "Authorization": `Bearer ${process.env.LEEGALITY_TOKEN}`
       },
       body: JSON.stringify(payload)
     });
