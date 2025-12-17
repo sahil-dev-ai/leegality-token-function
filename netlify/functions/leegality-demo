@@ -1,0 +1,104 @@
+// netlify/functions/leegality-demo.js
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*", // or restrict to your domains later
+  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Methods": "POST,OPTIONS"
+};
+
+export const handler = async (event, context) => {
+  // CORS preflight
+  if (event.httpMethod === "OPTIONS") {
+    return {
+      statusCode: 204,
+      headers: corsHeaders,
+      body: ""
+    };
+  }
+
+  if (event.httpMethod !== "POST") {
+    return {
+      statusCode: 405,
+      headers: corsHeaders,
+      body: JSON.stringify({ error: "Method Not Allowed" })
+    };
+  }
+
+  try {
+    const body = JSON.parse(event.body || "{}");
+    const { name, username, contact, profileId } = body;
+
+    if (!name || !username || !profileId) {
+      return {
+        statusCode: 400,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          error: "Missing required fields: name, username, profileId"
+        })
+      };
+    }
+
+    const payload = {
+      name,
+      username,
+      contact: contact || "Not provided",
+      profileId
+    };
+
+    // You can move this to env if you want:
+    const baseUrl =
+      process.env.LEEGALITY_BASE_URL || "https://sandbox.leegality.com";
+
+    const apiRes = await fetch(`${baseUrl}/api/v2.1/demo`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+        // If in future DE requires auth, add header here:
+        // "x-api-key": process.env.LEEGALITY_API_KEY,
+        // "Authorization": `Bearer ${process.env.LEEGALITY_TOKEN}`
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await apiRes.json();
+
+    if (!apiRes.ok) {
+      console.error("Leegality demo API error:", data);
+      return {
+        statusCode: apiRes.status,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          error: "Leegality API error",
+          details: data
+        })
+      };
+    }
+
+    const signUrl = data?.data?.invitations?.[0]?.signUrl;
+
+    if (!signUrl) {
+      console.error("No signUrl in response:", data);
+      return {
+        statusCode: 500,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          error: "No signUrl returned by Leegality",
+          raw: data
+        })
+      };
+    }
+
+    return {
+      statusCode: 200,
+      headers: corsHeaders,
+      body: JSON.stringify({ signUrl })
+    };
+  } catch (err) {
+    console.error("Netlify function error:", err);
+    return {
+      statusCode: 500,
+      headers: corsHeaders,
+      body: JSON.stringify({ error: "Internal server error" })
+    };
+  }
+};
