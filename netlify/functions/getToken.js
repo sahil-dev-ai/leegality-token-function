@@ -13,7 +13,7 @@ exports.handler = async function (event, context) {
     "https://digital-lending.figma.site",
     "https://*.figma.site",
     "https://yournaukri-hr-demo.netlify.app",
-    "https://car-insurance-app.figma.site" // 👈 add your CodeSandbox URL here
+    "https://car-insurance-app.figma.site"
   ];
 
   const requestOrigin = event.headers.origin || "";
