@@ -13,7 +13,7 @@ const allowedOrigins = [
   "https://digital-lending.figma.site",
   "https://*.figma.site",
   "https://yournaukri-hr-demo.netlify.app",
-  "https://car-insurance-app.figma.site",
+  "https://car-insurance-app.figma.site"
 ];
 
 exports.handler = async function (event, context) {
