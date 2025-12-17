@@ -1,14 +1,16 @@
 // netlify/functions/leegality-demo.js
 
+// ✅ CORS headers
 const corsHeaders = {
-  // For now allow all; later you can restrict to your Webflow / Figma domains
+  // You can start with "*" while testing.
+  // For production, you can restrict this to "https://leegality.com"
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type"
 };
 
 exports.handler = async (event, context) => {
-  // 1. Handle preflight
+  // ✅ Handle preflight just in case browser still sends OPTIONS
   if (event.httpMethod === "OPTIONS") {
     return {
       statusCode: 204,
@@ -17,7 +19,6 @@ exports.handler = async (event, context) => {
     };
   }
 
-  // 2. Only allow POST for actual usage
   if (event.httpMethod !== "POST") {
     return {
       statusCode: 405,
@@ -27,7 +28,9 @@ exports.handler = async (event, context) => {
   }
 
   try {
-    const body = JSON.parse(event.body || "{}");
+    // ✅ We will send JSON as text/plain from frontend to AVOID preflight.
+    // So event.body is still JSON string.
+    const body = event.body ? JSON.parse(event.body) : {};
     const { name, username, contact, profileId } = body;
 
     if (!name || !username || !profileId) {
