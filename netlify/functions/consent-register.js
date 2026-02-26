@@ -12,6 +12,7 @@ const allowedOrigins = [
   "https://digital-lending.figma.site",
   "https://*.figma.site",
   "https://yournaukri-hr-demo.netlify.app",
+  "https://kcc-app.figma.site",
   "https://car-insurance-app.figma.site",
 ];
 
