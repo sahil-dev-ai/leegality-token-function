@@ -1,10 +1,13 @@
-// netlify/functions/consent-runner.js
+// netlify/functions/consent-combined.js
 const fetch = require("node-fetch");
+const https = require("https");
 
-/**
- * Old allowed origins (kept for reference / future tightening)
- * Currently we still allow "*"
- */
+// Create a reusable HTTPS agent to keep TCP connections alive
+const httpsAgent = new https.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 10000,
+});
+
 const allowedOrigins = [
   "https://leegality.webflow.io",
   "https://www.leegality.com",
@@ -14,31 +17,31 @@ const allowedOrigins = [
   "https://customer-onboarding-app.netlify.app",
   "https://digital-lending-app.figma.site",
   "https://digital-lending.figma.site",
+  "https://*.figma.site",
   "https://yournaukri-hr-demo.netlify.app",
-  "https://car-insurance-app.figma.site",
   "https://kcc-app.figma.site",
-  "https://*.figma.site"
+  "https://car-insurance-app.figma.site",
 ];
+
+// --- CACHE VARIABLES ---
+// Storing these outside the handler allows them to persist across warm invocations
+let cachedAccessToken = null;
+let tokenExpirationTime = 0;
 
 exports.handler = async function (event) {
   const requestOrigin = event.headers.origin || "";
-
-  /**
-   * ✅ CURRENT CORS STRATEGY
-   * - Allow all origins to avoid CORS issues across demos
-   * - Old origins list kept for logging / future restriction
-   */
-  const corsHeaders = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-  };
 
   // Preflight
   if (event.httpMethod === "OPTIONS") {
     return {
       statusCode: 200,
-      headers: corsHeaders,
+      headers: {
+        "Access-Control-Allow-Origin": allowedOrigins.includes(requestOrigin)
+          ? requestOrigin
+          : "*",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      },
       body: "",
     };
   }
@@ -46,10 +49,25 @@ exports.handler = async function (event) {
   if (event.httpMethod !== "POST") {
     return {
       statusCode: 405,
-      headers: corsHeaders,
-      body: JSON.stringify({ error: "Method not allowed. Use POST." }),
+      headers: { Allow: "POST, OPTIONS" },
+      body: JSON.stringify({ error: "Method not allowed" }),
     };
   }
+
+  // Allow non-browser callers (no origin), restrict browsers
+  if (requestOrigin && !allowedOrigins.includes(requestOrigin)) {
+    return {
+      statusCode: 403,
+      headers: { "Access-Control-Allow-Origin": requestOrigin || "*" },
+      body: JSON.stringify({ error: "Origin not allowed" }),
+    };
+  }
+
+  const corsHeader = {
+    "Access-Control-Allow-Origin": requestOrigin || "*",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  };
 
   // Parse body
   let body;
@@ -58,237 +76,198 @@ exports.handler = async function (event) {
   } catch (e) {
     return {
       statusCode: 400,
-      headers: corsHeaders,
+      headers: corsHeader,
       body: JSON.stringify({ error: "Invalid JSON body" }),
     };
   }
 
-  /**
-   * Expected body:
-   * {
-   *   action: "register" | "update",
-   *   name?: string,
-   *   email?: string,
-   *   phone?: string,
-   *   consentProfileId?: string,
-   *   consentProfileVersion?: number,
-   *   principalId?: string,
-   *   preferenceUrlType?: "PRIVACY",
-   *   publicUrlExpiry?: number,
-   *   sessionExpiry?: number
-   * }
-   */
   const action = (body.action || "register").toLowerCase();
-  const publicUrlExpiry = Number(body.publicUrlExpiry || 60);
-  const sessionExpiry = Number(body.sessionExpiry || 60);
-
   const clientId = process.env.LEEGALITY_CLIENT_ID;
   const clientSecret = process.env.LEEGALITY_CLIENT_SECRET;
 
   if (!clientId || !clientSecret) {
     return {
       statusCode: 500,
-      headers: corsHeaders,
+      headers: corsHeader,
       body: JSON.stringify({ error: "Client credentials are missing." }),
     };
   }
 
-  const baseUrl =
-    process.env.LEEGALITY_BASE_URL ||
-    "https://sandbox-gateway.leegality.com"; // OLD URL preserved
+  const baseUrl = process.env.LEEGALITY_BASE_URL || "https://sandbox-gateway.leegality.com";
 
   try {
     // --------------------------------------------------
-    // 1️⃣ Get OAuth Token (backend-only)
+    // 1) GET OAUTH TOKEN (Using In-Memory Cache)
     // --------------------------------------------------
-    const authHeader =
-      "Basic " + Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+    let accessToken = cachedAccessToken;
+    const currentTime = Date.now();
 
-    const tokenRes = await fetch(`${baseUrl}/auth/oauth2/token`, {
-      method: "POST",
-      headers: {
-        Authorization: authHeader,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        grant_type: "client_credentials",
-        scope: "auth consent-runner",
-      }),
-    });
+    // If we don't have a token, or it expires in the next 60 seconds, fetch a new one
+    if (!accessToken || currentTime > tokenExpirationTime - 60000) {
+      const authHeader = "Basic " + Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
 
-    const tokenData = await tokenRes.json();
-
-    if (!tokenRes.ok || !tokenData.access_token) {
-      return {
-        statusCode: 500,
-        headers: corsHeaders,
-        body: JSON.stringify({
-          error: "Failed to obtain access token",
-          details: tokenData,
+      const tokenRes = await fetch(`${baseUrl}/auth/oauth2/token`, {
+        method: "POST",
+        agent: httpsAgent, // Use Keep-Alive
+        headers: {
+          Authorization: authHeader,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          grant_type: "client_credentials",
+          scope: "auth consent-runner",
         }),
-      };
+      });
+
+      const tokenData = await tokenRes.json();
+
+      if (!tokenRes.ok || !tokenData.access_token) {
+        return {
+          statusCode: 500,
+          headers: corsHeader,
+          body: JSON.stringify({ error: "Failed to obtain access token", details: tokenData }),
+        };
+      }
+
+      accessToken = tokenData.access_token;
+      cachedAccessToken = accessToken;
+      
+      // Calculate expiration time (defaulting to 1 hour if not provided by the API)
+      const expiresInSeconds = tokenData.expires_in || 3600;
+      tokenExpirationTime = currentTime + (expiresInSeconds * 1000);
     }
 
-    const accessToken = tokenData.access_token;
-
     // --------------------------------------------------
-    // 2️⃣ REGISTER (Consent Collect)
+    // 2) REGISTER LOGIC
     // --------------------------------------------------
     if (action === "register") {
-      const { name, email, phone, consentProfileId, consentProfileVersion } =
-        body || {};
+      const { name, email, phone, consentProfileId, consentProfileVersion } = body;
 
       if (!name || !email || !phone) {
         return {
           statusCode: 400,
-          headers: corsHeaders,
-          body: JSON.stringify({
-            error: "Missing required fields",
-            details: "name, email and phone are required",
-          }),
+          headers: corsHeader,
+          body: JSON.stringify({ error: "Missing required fields: name, email, phone" }),
         };
       }
 
-      const profileId =
-        consentProfileId || process.env.CONSENT_PROFILE_ID;
-      const profileVersion = Number(
-        consentProfileVersion || process.env.CONSENT_PROFILE_VERSION || 1
-      );
+      const profileId = consentProfileId || process.env.CONSENT_PROFILE_ID;
+      const profileVersion = Number(consentProfileVersion || process.env.CONSENT_PROFILE_VERSION || 1);
 
       if (!profileId) {
         return {
           statusCode: 400,
-          headers: corsHeaders,
-          body: JSON.stringify({
-            error: "consentProfileId is required",
-          }),
+          headers: corsHeader,
+          body: JSON.stringify({ error: "consentProfileId is required." }),
         };
       }
 
-      // Backend-generated CPID (OLD BEHAVIOR preserved)
       const cpid = `${email}-${Date.now()}`;
 
       const registerPayload = {
         consentProfileId: profileId,
         consentProfileVersion: profileVersion,
-        principal: {
-          id: cpid,
-          email,
-          name,
-          phone,
-        },
-        publicUrlExpiry,
-        sessionExpiry,
+        principal: { id: cpid, email, name, phone },
+        publicUrlExpiry: Number(body.publicUrlExpiry || 60),
+        sessionExpiry: Number(body.sessionExpiry || 60),
       };
 
-      const registerRes = await fetch(
-        `${baseUrl}/consent-runner/api/v1/consents/client/register`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${accessToken}`,
-          },
-          body: JSON.stringify(registerPayload),
-        }
-      );
+      const registerRes = await fetch(`${baseUrl}/consent-runner/api/v1/consents/client/register`, {
+        method: "POST",
+        agent: httpsAgent, // Use Keep-Alive
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(registerPayload),
+      });
 
       const registerData = await registerRes.json();
 
       if (!registerRes.ok) {
         return {
           statusCode: registerRes.status,
-          headers: corsHeaders,
-          body: JSON.stringify({
-            error: "Consent registration failed",
-            details: registerData,
-          }),
+          headers: corsHeader,
+          body: JSON.stringify({ error: "Consent registration failed", details: registerData }),
+        };
+      }
+
+      const consentUrl = registerData?.data?.consentCollectUrl;
+      if (!consentUrl) {
+        return {
+          statusCode: 500,
+          headers: corsHeader,
+          body: JSON.stringify({ error: "No consentCollectUrl returned", details: registerData }),
         };
       }
 
       return {
         statusCode: 200,
-        headers: corsHeaders,
-        body: JSON.stringify({
-          consentUrl: registerData?.data?.consentCollectUrl || null,
-          cpid,
-          profileId,
-          profileVersion,
-        }),
+        headers: corsHeader,
+        body: JSON.stringify({ consentUrl, cpid, profileId, profileVersion }),
       };
     }
 
     // --------------------------------------------------
-    // 3️⃣ UPDATE (Privacy Center)
+    // 3) UPDATE LOGIC
     // --------------------------------------------------
     if (action === "update") {
-      const principalId = body.principalId;
-      const preferenceUrlType = body.preferenceUrlType || "PRIVACY";
+      const { principalId, preferenceUrlType = "PRIVACY" } = body;
+      const publicUrlExpiry = Number(body.publicUrlExpiry || 60);
+      const sessionExpiry = Number(body.sessionExpiry || 60);
 
       if (!principalId) {
         return {
           statusCode: 400,
-          headers: corsHeaders,
-          body: JSON.stringify({
-            error: "principalId is required for update",
-          }),
+          headers: corsHeader,
+          body: JSON.stringify({ error: "principalId is required for update" }),
         };
       }
 
-      const updatePayload = {
-        principalId,
-        preferenceUrlType,
-        publicUrlExpiry,
-        sessionExpiry,
-      };
+      const updatePayload = { principalId, preferenceUrlType, publicUrlExpiry, sessionExpiry };
 
-      const updateRes = await fetch(
-        `${baseUrl}/consent-runner/api/v1/consents/client/update`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${accessToken}`,
-          },
-          body: JSON.stringify(updatePayload),
-        }
-      );
+      const updateRes = await fetch(`${baseUrl}/consent-runner/api/v1/consents/client/update`, {
+        method: "POST",
+        agent: httpsAgent, // Use Keep-Alive
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(updatePayload),
+      });
 
       const updateData = await updateRes.json();
 
       if (!updateRes.ok) {
         return {
           statusCode: updateRes.status,
-          headers: corsHeaders,
-          body: JSON.stringify({
-            error: "Consent update failed",
-            details: updateData,
-          }),
+          headers: corsHeader,
+          body: JSON.stringify({ error: "Consent update failed", details: updateData }),
         };
       }
 
       return {
         statusCode: 200,
-        headers: corsHeaders,
+        headers: corsHeader,
         body: JSON.stringify({
-          privacyCenterUrl: updateData?.data?.privacyCenterUrl,
+          consentUrl: updateData?.data?.privacyCenterUrl,
           principalId,
         }),
       };
     }
 
+    // Fallback if action is neither
     return {
       statusCode: 400,
-      headers: corsHeaders,
-      body: JSON.stringify({
-        error: "Invalid action. Use 'register' or 'update'.",
-      }),
+      headers: corsHeader,
+      body: JSON.stringify({ error: "Invalid action. Use 'register' or 'update'." }),
     };
+
   } catch (error) {
-    console.error("consent-runner error:", error);
+    console.error("consent function error:", error);
     return {
       statusCode: 500,
-      headers: corsHeaders,
+      headers: corsHeader,
       body: JSON.stringify({ error: error.message }),
     };
   }
