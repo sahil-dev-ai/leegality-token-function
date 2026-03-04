@@ -1,4 +1,4 @@
-// netlify/functions/consent-register.js
+// netlify/functions/consent-combined.js
 const fetch = require("node-fetch");
 
 const allowedOrigins = [
@@ -69,36 +69,8 @@ exports.handler = async function (event) {
     };
   }
 
-  const { name, email, phone, consentProfileId, consentProfileVersion } = body;
-
-  if (!name || !email || !phone) {
-    return {
-      statusCode: 400,
-      headers: corsHeader,
-      body: JSON.stringify({
-        error: "Missing required fields",
-        details: "name, email and phone are required",
-      }),
-    };
-  }
-
-  // Use profile info from frontend, but allow a default from env if needed
-  const profileId =
-    consentProfileId || process.env.CONSENT_PROFILE_ID; // optional fallback
-  const profileVersion = Number(
-    consentProfileVersion || process.env.CONSENT_PROFILE_VERSION || 1
-  );
-
-  if (!profileId) {
-    return {
-      statusCode: 400,
-      headers: corsHeader,
-      body: JSON.stringify({
-        error:
-          "consentProfileId is required (provide from frontend or set CONSENT_PROFILE_ID env var).",
-      }),
-    };
-  }
+  // Determine action (default to 'register' to keep existing frontend calls working)
+  const action = (body.action || "register").toLowerCase();
 
   const clientId = process.env.LEEGALITY_CLIENT_ID;
   const clientSecret = process.env.LEEGALITY_CLIENT_SECRET;
@@ -116,7 +88,7 @@ exports.handler = async function (event) {
     "https://sandbox-gateway.leegality.com"; // sandbox by default
 
   try {
-    // 1) Get OAuth token
+    // 1) Get OAuth token (Shared by both register and update)
     const authHeader =
       "Basic " + Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
 
@@ -147,72 +119,178 @@ exports.handler = async function (event) {
 
     const accessToken = tokenData.access_token;
 
-    // 2) Build register payload
-    const cpid = `${email}-${Date.now()}`; // still generated backend-only
+    // --------------------------------------------------
+    // 2) REGISTER LOGIC (Existing code unchanged)
+    // --------------------------------------------------
+    if (action === "register") {
+      const { name, email, phone, consentProfileId, consentProfileVersion } = body;
 
-    const registerPayload = {
-      consentProfileId: profileId,
-      consentProfileVersion: profileVersion,
-      principal: {
-        id: cpid,
-        email,
-        name,
-        phone,
-      },
-      publicUrlExpiry: 60,
-      sessionExpiry: 60,
-    };
-
-    // 3) Call register API
-    const registerRes = await fetch(
-      `${baseUrl}/consent-runner/api/v1/consents/client/register`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify(registerPayload),
+      if (!name || !email || !phone) {
+        return {
+          statusCode: 400,
+          headers: corsHeader,
+          body: JSON.stringify({
+            error: "Missing required fields",
+            details: "name, email and phone are required",
+          }),
+        };
       }
-    );
 
-    const registerData = await registerRes.json();
+      // Use profile info from frontend, but allow a default from env if needed
+      const profileId = consentProfileId || process.env.CONSENT_PROFILE_ID; // optional fallback
+      const profileVersion = Number(
+        consentProfileVersion || process.env.CONSENT_PROFILE_VERSION || 1
+      );
 
-    if (!registerRes.ok) {
+      if (!profileId) {
+        return {
+          statusCode: 400,
+          headers: corsHeader,
+          body: JSON.stringify({
+            error:
+              "consentProfileId is required (provide from frontend or set CONSENT_PROFILE_ID env var).",
+          }),
+        };
+      }
+
+      // Build register payload
+      const cpid = `${email}-${Date.now()}`; // still generated backend-only
+
+      const registerPayload = {
+        consentProfileId: profileId,
+        consentProfileVersion: profileVersion,
+        principal: {
+          id: cpid,
+          email,
+          name,
+          phone,
+        },
+        publicUrlExpiry: Number(body.publicUrlExpiry || 60),
+        sessionExpiry: Number(body.sessionExpiry || 60),
+      };
+
+      // Call register API
+      const registerRes = await fetch(
+        `${baseUrl}/consent-runner/api/v1/consents/client/register`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify(registerPayload),
+        }
+      );
+
+      const registerData = await registerRes.json();
+
+      if (!registerRes.ok) {
+        return {
+          statusCode: registerRes.status,
+          headers: corsHeader,
+          body: JSON.stringify({
+            error: "Consent registration failed",
+            details: registerData,
+          }),
+        };
+      }
+
+      const consentUrl = registerData?.data?.consentCollectUrl;
+      if (!consentUrl) {
+        return {
+          statusCode: 500,
+          headers: corsHeader,
+          body: JSON.stringify({
+            error: "No consentCollectUrl returned",
+            details: registerData,
+          }),
+        };
+      }
+
       return {
-        statusCode: registerRes.status,
+        statusCode: 200,
         headers: corsHeader,
         body: JSON.stringify({
-          error: "Consent registration failed",
-          details: registerData,
+          consentUrl,
+          cpid,
+          profileId,
+          profileVersion,
         }),
       };
     }
 
-    const consentUrl = registerData?.data?.consentCollectUrl;
-    if (!consentUrl) {
+    // --------------------------------------------------
+    // 3) UPDATE LOGIC (From consent-runner.js)
+    // --------------------------------------------------
+    if (action === "update") {
+      const principalId = body.principalId;
+      const preferenceUrlType = body.preferenceUrlType || "PRIVACY";
+      const publicUrlExpiry = Number(body.publicUrlExpiry || 60);
+      const sessionExpiry = Number(body.sessionExpiry || 60);
+
+      if (!principalId) {
+        return {
+          statusCode: 400,
+          headers: corsHeader,
+          body: JSON.stringify({
+            error: "principalId is required for update",
+          }),
+        };
+      }
+
+      const updatePayload = {
+        principalId,
+        preferenceUrlType,
+        publicUrlExpiry,
+        sessionExpiry,
+      };
+
+      const updateRes = await fetch(
+        `${baseUrl}/consent-runner/api/v1/consents/client/update`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify(updatePayload),
+        }
+      );
+
+      const updateData = await updateRes.json();
+
+      if (!updateRes.ok) {
+        return {
+          statusCode: updateRes.status,
+          headers: corsHeader,
+          body: JSON.stringify({
+            error: "Consent update failed",
+            details: updateData,
+          }),
+        };
+      }
+
       return {
-        statusCode: 500,
+        statusCode: 200,
         headers: corsHeader,
         body: JSON.stringify({
-          error: "No consentCollectUrl returned",
-          details: registerData,
+          privacyCenterUrl: updateData?.data?.privacyCenterUrl,
+          principalId,
         }),
       };
     }
 
+    // Fallback if action is neither
     return {
-      statusCode: 200,
+      statusCode: 400,
       headers: corsHeader,
       body: JSON.stringify({
-        consentUrl,
-        cpid,
-        profileId,
-        profileVersion,
+        error: "Invalid action. Use 'register' or 'update'.",
       }),
     };
+
   } catch (error) {
-    console.error("consent-register error:", error);
+    console.error("consent function error:", error);
     return {
       statusCode: 500,
       headers: corsHeader,
