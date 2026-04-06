@@ -21,6 +21,7 @@ const allowedOrigins = [
   "https://yournaukri-hr-demo.netlify.app",
   "https://kcc-app.figma.site",
   "https://car-insurance-app.figma.site",
+  "https://tajconsent.figma.site",
 ];
 
 // --- CACHE VARIABLES ---
