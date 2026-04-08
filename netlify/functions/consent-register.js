@@ -8,20 +8,13 @@ const httpsAgent = new https.Agent({
   keepAliveMsecs: 10000,
 });
 
+// Explicitly listed allowed domains
 const allowedOrigins = [
   "https://leegality.webflow.io",
   "https://www.leegality.com",
   "https://consentin.webflow.io",
   "https://consent.in",
   "https://www.consent.in",
-  "https://customer-onboarding-app.netlify.app",
-  "https://digital-lending-app.figma.site",
-  "https://digital-lending.figma.site",
-  "https://*.figma.site",
-  "https://yournaukri-hr-demo.netlify.app",
-  "https://kcc-app.figma.site",
-  "https://car-insurance-app.figma.site",
-  "https://taj-consent.figma.site",
 ];
 
 // --- CACHE VARIABLES ---
@@ -32,14 +25,18 @@ let tokenExpirationTime = 0;
 exports.handler = async function (event) {
   const requestOrigin = event.headers.origin || "";
 
+  // DYNAMIC CORS CHECK: Allows explicit matches OR any .figma.site OR any .netlify.app
+  const isAllowedOrigin = 
+    allowedOrigins.includes(requestOrigin) || 
+    requestOrigin.endsWith(".figma.site") || 
+    requestOrigin.endsWith(".netlify.app");
+
   // Preflight
   if (event.httpMethod === "OPTIONS") {
     return {
       statusCode: 200,
       headers: {
-        "Access-Control-Allow-Origin": allowedOrigins.includes(requestOrigin)
-          ? requestOrigin
-          : "*",
+        "Access-Control-Allow-Origin": isAllowedOrigin ? requestOrigin : "*",
         "Access-Control-Allow-Headers": "Content-Type, Authorization",
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       },
@@ -55,8 +52,8 @@ exports.handler = async function (event) {
     };
   }
 
-  // Allow non-browser callers (no origin), restrict browsers
-  if (requestOrigin && !allowedOrigins.includes(requestOrigin)) {
+  // Allow non-browser callers (no origin), restrict unauthorized browsers
+  if (requestOrigin && !isAllowedOrigin) {
     return {
       statusCode: 403,
       headers: { "Access-Control-Allow-Origin": requestOrigin || "*" },
@@ -65,7 +62,7 @@ exports.handler = async function (event) {
   }
 
   const corsHeader = {
-    "Access-Control-Allow-Origin": requestOrigin || "*",
+    "Access-Control-Allow-Origin": isAllowedOrigin ? requestOrigin : "*",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   };
